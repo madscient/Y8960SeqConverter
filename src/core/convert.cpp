@@ -131,7 +131,13 @@ struct State {
     bool voiceDirty = true;
     bool legato = false;
     int quant = 8;
-    bool lastWasNote = false;
+    // The previous note is still keyed on at its end, so the next note
+    // continues it. The drivers decide that when the note ends, before they
+    // read what follows it: what counts is legato as it was when that note was
+    // read, not as it is at the next one (BGM.BIN, the gate test at D67Ah).
+    // MuSICA's "(d i50) d i" is legato on, d, vibrato, legato off, d - one d,
+    // the vibrato starting half way.
+    bool held = false;
     std::array<int, 5> rhythmAtt{};  // B S T C H, attenuation
 
     // The Y8960 reader's, as far as it is known. -1: not known.
@@ -148,7 +154,7 @@ struct State {
     bool operator==(const State& o) const {
         return volume == o.volume && instrument == o.instrument && haveUser == o.haveUser &&
                user == o.user && voiceDirty == o.voiceDirty && legato == o.legato &&
-               quant == o.quant && lastWasNote == o.lastWasNote &&
+               quant == o.quant && held == o.held &&
                rhythmAtt == o.rhythmAtt && yOctave == o.yOctave &&
                yLoud == o.yLoud && yVoice == o.yVoice && yQuant == o.yQuant &&
                ySustain == o.ySustain && yAccents == o.yAccents && yRhyLevel == o.yRhyLevel &&
@@ -400,7 +406,7 @@ private:
         case SrcEvent::Note: fmNote(e.value, e.length); break;
         case SrcEvent::Rest:
             rest(e.length);
-            s_.lastWasNote = false;
+            s_.held = false;
             break;
         case SrcEvent::Wait: wait(e.length); break;
         case SrcEvent::Volume:
@@ -531,18 +537,18 @@ private:
     // which no Q of the bytecode says, so it is written out. MuSICA's gate is
     // read off BGM.BIN; OPLLDRV's is taken to be the same.
     void melodyNote(int srcNote, int len) {
-        const bool join = s_.legato && s_.lastWasNote;
+        const bool join = s_.held;
         const bool cutLast = !s_.legato && s_.quant == 0;
         quant((s_.legato || s_.quant == 0 || s_.quant > 8) ? 8 : s_.quant);
         if (join) put(OpTie);
         if (cutLast && len >= 1) {
             if (len > 1) noteOp(srcNote, len - 1);
             rest(1);
-            s_.lastWasNote = false;
+            s_.held = false;
             return;
         }
         noteOp(srcNote, len);
-        s_.lastWasNote = true;
+        s_.held = s_.legato;
     }
 
     void fmNote(int srcNote, int len) {
@@ -558,7 +564,7 @@ private:
         case SrcEvent::Note: psgNote(e.value, e.length); break;
         case SrcEvent::Rest:
             rest(e.length);
-            s_.lastWasNote = false;
+            s_.held = false;
             break;
         case SrcEvent::Wait: wait(e.length); break;
         case SrcEvent::Volume:

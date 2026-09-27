@@ -166,6 +166,39 @@ void fmLowest() {
                bytes({0x84, 0x4B, 0x82, 0x4A, 0x81, 0x7F, 0x80, 0x00, 0x00, 0x0C, 0xFF}));
 }
 
+// One FM block played once, the given commands in it.
+bool fmBlock(const std::vector<int>& block, y8::Sequence& seq) {
+    const std::uint16_t base = 0xA000;
+    std::vector<std::uint8_t> body = musicaHeader(0, base + 35);
+    for (int x : {0x29, 0xA0, 0x01, 0x00, 0x00, 0x00}) body.push_back(static_cast<std::uint8_t>(x));
+    for (int x : block) body.push_back(static_cast<std::uint8_t>(x));
+    body.push_back(0xFF);
+    return convertBytes(musicaFile(base, body), seq) && seq.tracks.size() == 1;
+}
+
+void legatoBracket() {
+    // MuSICA's "q6 (d i50) d i": Q6, legato on, O6D, vibrato, legato off,
+    // O6D, vibrato off. The first D is held when it ends, so the second
+    // continues it, and the second is cut by Q6.
+    y8::Sequence seq;
+    check(fmBlock({0x86, 0x06, 0x85, 0x3F, 0x1E, 0x89, 0x32, 0x84, 0x3F, 0x1E, 0x89, 0x00}, seq),
+          "legato bracket converts");
+    if (seq.tracks.empty()) return;
+    checkBytes("legato bracket", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0x82, 0x4A, 0x81, 0x7F, 0x40, 0x02, 0x1E,
+                      0x83, 0x06, 0x45, 0x02, 0x1E, 0xFF}));
+}
+
+void legatoLate() {
+    // O6D, legato on, O6D: the first ends with legato off and is keyed off,
+    // so the second starts afresh.
+    y8::Sequence seq;
+    check(fmBlock({0x3F, 0x1E, 0x85, 0x3F, 0x1E}, seq), "late legato converts");
+    if (seq.tracks.empty()) return;
+    checkBytes("late legato", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0x82, 0x4A, 0x81, 0x7F, 0x40, 0x02, 0x1E, 0x02, 0x1E, 0xFF}));
+}
+
 void musicaFold() {
     const std::uint16_t base = 0xA000;
     std::vector<std::uint8_t> body = musicaHeader(0, base + 35);
@@ -270,6 +303,8 @@ int main() {
     opllRhythm();
     musicaLoop();
     musicaFold();
+    legatoBracket();
+    legatoLate();
     fmLowest();
     psgVoice();
     blockHeader();
