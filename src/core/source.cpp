@@ -209,6 +209,9 @@ bool loadOpll(Song& song, const std::string& name, Diagnostics& diag) {
         std::uint32_t q = top + static_cast<std::uint32_t>(i * 2);
         int offset = 0;
         if (!reader.word(q, offset)) return false;
+        // 0 is a channel the song does not use: R-TYPE's songs leave them so,
+        // and uniskie's OPLDRV_tool reads and writes them the same way.
+        if (offset == 0) continue;
         Channel ch;
         const bool rhythm = song.rhythmMode && i == 0;
         ch.part = rhythm ? Part::Rhythm : Part::Fm;

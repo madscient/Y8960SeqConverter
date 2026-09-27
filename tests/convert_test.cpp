@@ -72,6 +72,19 @@ void opllMelody() {
                bytes({0x84, 0x4B, 0x81, 0x7F, 0x82, 0x42, 0x41, 0x00, 0x18, 0x0C, 0x0C, 0xFF}));
 }
 
+void opllUnused() {
+    // Melody 9 with channel 1 alone: the other eight offsets are 0.
+    std::vector<std::uint8_t> f = bytes({0x12, 0x00});
+    for (int i = 1; i < 9; ++i) {
+        f.push_back(0x00);
+        f.push_back(0x00);
+    }
+    for (int b : {0x25, 0x18, 0xFF}) f.push_back(static_cast<std::uint8_t>(b));
+    y8::Sequence seq;
+    check(convertBytes(f, seq), "OPLLDRV with unused channels converts");
+    check(seq.tracks.size() == 1, "an offset of 0 is a channel the song does not use");
+}
+
 void opllRhythm() {
     // Melody 6 and rhythm: the rhythm first, then channels 1-6.
     std::vector<std::uint8_t> f = bytes({0x0E, 0x00});
@@ -253,6 +266,7 @@ void blockHeader() {
 int main() {
     recordRoundTrip();
     opllMelody();
+    opllUnused();
     opllRhythm();
     musicaLoop();
     musicaFold();
