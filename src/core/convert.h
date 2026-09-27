@@ -1,0 +1,65 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "diag.h"
+#include "song.h"
+#include "voicedata.h"
+
+namespace y8 {
+
+struct ConvertOptions {
+    // Channel names (channelName) to leave out.
+    std::vector<std::string> drop;
+    // 64 voices of 8 bytes, OPLL registers 00h-07h, read out of the machine's
+    // own ROM. Empty: OPLLDRV's 82h takes the Y8960 preset of the same number.
+    std::vector<std::uint8_t> romVoices;
+};
+
+struct Track {
+    int number = 0;   // 0-15
+    int device = 0;   // bytecode.md's device number
+    int channel = 0;
+    std::string name; // the source channel, for messages
+    std::vector<std::uint8_t> bytes;  // the events, FFh included
+};
+
+struct VoiceSlot {
+    bool isWave = false;  // chunk 02 rather than 01
+    VoiceRecord record{};
+};
+
+// A software envelope in Y8960's terms: the rates are 0-32 (basic-reference.md,
+// "ソフトウェアエンベロープ"), the level 0-15.
+struct Envelope {
+    int ar = 0, dr = 0, sl = 0, rr = 0;
+    bool operator==(const Envelope& o) const {
+        return ar == o.ar && dr == o.dr && sl == o.sl && rr == o.rr;
+    }
+};
+
+struct Sequence {
+    std::vector<Track> tracks;
+    std::vector<VoiceSlot> voices;    // the sequence's voice set; the index is what 85h names
+    std::vector<Envelope> envelopes;  // number 1 first; B2h names index + 1
+};
+
+constexpr int kRomVoiceTableSize = 64 * 8;
+
+// Writes nothing into `seq` it would have to take back: on false, the
+// diagnostics say why.
+bool convert(const Song& song, const ConvertOptions& options, const std::string& name,
+             Sequence& seq, Diagnostics& diag);
+
+// A MuSICA envelope rate byte (the counter in the high nibble, the step in the
+// low) as Y8960's 0-32. `exact` is false when no rate of the table has the
+// same counter and step, and the nearest in speed was taken.
+int envelopeRate(std::uint8_t musica, bool& exact);
+
+// The 32 byte record a Y8960 FM voice is, for the eight OPLL user voice
+// registers: the inverse of the ROM's OPLL_SETUSER.
+VoiceRecord recordFromOpll(const std::uint8_t* opll, const std::string& label);
+
+} // namespace y8

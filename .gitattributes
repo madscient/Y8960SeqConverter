@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.bin binary
+*.y8sq binary
+*.y8pc binary
+*.SQ binary
+*.PC binary
+
+# Written for the people and the AI working on this repository, not for the
+# people using the release: the source archives GitHub makes leave it out.
+doc/plan.md export-ignore
