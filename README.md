@@ -10,6 +10,12 @@ FM-BIOS の演奏ドライバ（OPLLDRV）と MuSICA の演奏データを、
 できたファイルは Y8960 BASIC Extension の `CALL MLOAD` が読み、
 [Y8960Sequencer](https://github.com/madscient/Y8960Sequencer) がそのまま鳴らせる。
 
+## 入手
+
+[Releases](https://github.com/madscient/Y8960SeqConverter/releases) から、
+Windows（x64）と Linux（x64）の実行ファイルを入手できる。展開した `y8conv` を
+そのまま使う。ほかの環境では、下の「ビルド」の手順でソースから作る。
+
 ## 使い方
 
 ```
