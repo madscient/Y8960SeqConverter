@@ -6,5 +6,6 @@
 *.PC binary
 
 # Written for the people and the AI working on this repository, not for the
-# people using the release: the source archives GitHub makes leave it out.
+# people using the release: the source archives GitHub makes leave them out.
 doc/plan.md export-ignore
+doc/musica-driver.md export-ignore

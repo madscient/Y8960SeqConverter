@@ -14,6 +14,10 @@
 | `README.md` | 成果物（使い方とビルド手順） | 利用者、開発者 |
 | `doc/conversion.md` | 成果物 ＋ 仕様書（何が何に写るか、写らないもの） | 利用者、開発者 |
 | `doc/musica-driver.md` | 情報リソース（`BGM.BIN` を読んで確かめた MuSICA の動作） | 開発者、Y8960 BASIC Extension でエンベロープを実装する人 |
+
+`doc/plan.md` と `doc/musica-driver.md` は、`.gitattributes` の `export-ignore` で
+GitHub の Source code のアーカイブから外す（利用者の決定、2026-09-28）。配布物にも
+入れない。
 | `doc/plan.md`（この文書） | 情報リソース（設計判断と経緯） | AI、開発者 |
 
 **このリポジトリはまだ remote を持たないが、兄弟リポジトリと同じく公開する前提で
