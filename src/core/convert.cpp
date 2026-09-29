@@ -36,8 +36,6 @@ constexpr int kNoteOffsetDivider = 11;
 constexpr int kInitOctave = 4;
 constexpr int kInitLoudness = 71;
 constexpr int kInitQuant = 8;
-constexpr int kInitRhythmLevel = 8;
-constexpr int kInitRhythmAccent = 15;
 
 // What the drivers start a channel with. MuSICA's are the manual's: volume
 // 60h, instrument 7Ah, Q 8. 推測 for OPLLDRV: its manual gives none. The
@@ -147,8 +145,10 @@ struct State {
     int yQuant = kInitQuant;
     int ySustain = 0;
     int yAccents = -1;
-    int yRhyLevel = kInitRhythmLevel;
-    int yRhyAccent = kInitRhythmAccent;
+    // Not running state: the reader resets them only when the sequence starts
+    // from the top, so a repeat of the whole sequence finds the levels its end
+    // left. Unknown at the start, then, not the reader's 8.
+    std::array<int, 5> yRhyLevels{-1, -1, -1, -1, -1};  // B S T C H
     int yEnvelope = 0;
 
     bool operator==(const State& o) const {
@@ -157,8 +157,8 @@ struct State {
                quant == o.quant && held == o.held &&
                rhythmAtt == o.rhythmAtt && yOctave == o.yOctave &&
                yLoud == o.yLoud && yVoice == o.yVoice && yQuant == o.yQuant &&
-               ySustain == o.ySustain && yAccents == o.yAccents && yRhyLevel == o.yRhyLevel &&
-               yRhyAccent == o.yRhyAccent && yEnvelope == o.yEnvelope;
+               ySustain == o.ySustain && yAccents == o.yAccents && yRhyLevels == o.yRhyLevels &&
+               yEnvelope == o.yEnvelope;
     }
 
     // What a loop's head can count on whichever round it is in. The octave and
@@ -625,53 +625,36 @@ private:
         }
     }
 
-    // The bytecode gives the rhythm two levels, the plain one and the accent,
-    // where the source gives every instrument its own. A strike that needs
-    // more than two is brought to the nearest of its loudest and quietest.
+    // Every instrument's level is its plain volume; the accent is never used.
+    // A level is set when an instrument is struck, and the same D8 takes along
+    // every other instrument that wants that level too, which costs nothing.
     void hit(int bits, int len) {
         if (bits == 0) {
             wait(len);
             return;
         }
-        int lo = 16, hi = -1;
+        std::array<int, 5> want{};
+        for (int i = 0; i < 5; ++i) want[static_cast<std::size_t>(i)] = 15 - s_.rhythmAtt[static_cast<std::size_t>(i)];
         for (int i = 0; i < 5; ++i) {
-            if (!(bits & (0x10 >> i))) continue;
-            const int level = 15 - s_.rhythmAtt[static_cast<std::size_t>(i)];
-            lo = std::min(lo, level);
-            hi = std::max(hi, level);
-        }
-        int accents = 0;
-        if (lo == hi) {
-            if (lo == s_.yRhyAccent && lo != s_.yRhyLevel) {
-                accents = bits;
-            } else if (lo != s_.yRhyLevel) {
-                put(OpRhythmVolume, lo);
-                s_.yRhyLevel = lo;
+            const int level = want[static_cast<std::size_t>(i)];
+            if (!(bits & (0x10 >> i)) || s_.yRhyLevels[static_cast<std::size_t>(i)] == level) continue;
+            int mask = 0;
+            for (int j = 0; j < 5; ++j) {
+                if (want[static_cast<std::size_t>(j)] == level && s_.yRhyLevels[static_cast<std::size_t>(j)] != level) {
+                    mask |= 0x10 >> j;
+                    s_.yRhyLevels[static_cast<std::size_t>(j)] = level;
+                }
             }
-        } else {
-            bool mixed = false;
-            for (int i = 0; i < 5; ++i) {
-                if (!(bits & (0x10 >> i))) continue;
-                const int level = 15 - s_.rhythmAtt[static_cast<std::size_t>(i)];
-                if (level != lo && level != hi) mixed = true;
-                if (level * 2 >= lo + hi) accents |= 0x10 >> i;
-            }
-            if (mixed) {
-                sh_.warning(name_ + ": a strike asks for more than two rhythm volumes at once; the "
-                                    "middle ones are brought to the nearest");
-            }
-            if (s_.yRhyLevel != lo) {
-                put(OpRhythmVolume, lo);
-                s_.yRhyLevel = lo;
-            }
-            if (s_.yRhyAccent != hi) {
-                put(OpRhythmAccentVol, hi);
-                s_.yRhyAccent = hi;
+            if (mask == 0x1F) {
+                put(OpRhythmVolume, level);
+            } else {
+                put(OpRhythmInstVolume, mask);
+                put(level);
             }
         }
-        if (s_.yAccents < 0 || ((s_.yAccents ^ accents) & bits) != 0) {
-            put(OpRhythmAccent, accents);
-            s_.yAccents = accents;
+        if (s_.yAccents != 0) {
+            put(OpRhythmAccent, 0);
+            s_.yAccents = 0;
         }
         put(OpRhythmHit, bits);
         int first = std::min(len, kLengthMax);

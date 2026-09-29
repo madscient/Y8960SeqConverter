@@ -105,9 +105,35 @@ void opllRhythm() {
     }
     check(seq.tracks[0].channel == 10, "the rhythm is channel 10");
     // The bass drum at level 15 and the hi-hat at the default attenuation 3,
-    // level 12: the plain level 12, the accent 15 on the bass drum.
+    // level 12, each its own plain volume; the other three ride along with the
+    // hi-hat's. No accent.
     checkBytes("OPLLDRV rhythm", seq.tracks[0].bytes,
-               bytes({0x84, 0x4B, 0xA9, 0x0C, 0xA8, 0x10, 0xC8, 0x11, 0x0C, 0xFF}));
+               bytes({0x84, 0x4B, 0xD8, 0x10, 0x0F, 0xD8, 0x0F, 0x0C, 0xA8, 0x00, 0xC8, 0x11, 0x0C,
+                      0xFF}));
+}
+
+void opllRhythmAll() {
+    std::vector<std::uint8_t> f = bytes({0x0E, 0x00});
+    for (int i = 1; i < 7; ++i) {
+        f.push_back(0x18);
+        f.push_back(0x00);
+    }
+    // every instrument at attenuation 7, level 8, then bass and hi-hat twice
+    for (int b : {0xA0, 0x07, 0x31, 0x0C, 0x31, 0x0C, 0xFF, 0x00, 0x00, 0x00, 0xFF}) {
+        f.push_back(static_cast<std::uint8_t>(b));
+    }
+    f[0x18] = 0xFF;
+    y8::Sequence seq;
+    check(convertBytes(f, seq), "OPLLDRV rhythm, one volume for all converts");
+    if (seq.tracks.size() != 1) {
+        check(false, "one rhythm track");
+        return;
+    }
+    // One level for all five is A9. It is written though 8 is what the reader
+    // resets to: a repeat of the sequence does not reset it. The second
+    // strike sets nothing again.
+    checkBytes("OPLLDRV rhythm, one volume for all", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0xA9, 0x08, 0xA8, 0x00, 0xC8, 0x11, 0x0C, 0xC8, 0x11, 0x0C, 0xFF}));
 }
 
 std::vector<std::uint8_t> musicaFile(std::uint16_t base, const std::vector<std::uint8_t>& body) {
@@ -301,6 +327,7 @@ int main() {
     opllMelody();
     opllUnused();
     opllRhythm();
+    opllRhythmAll();
     musicaLoop();
     musicaFold();
     legatoBracket();

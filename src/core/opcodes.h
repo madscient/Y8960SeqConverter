@@ -45,6 +45,7 @@ enum Op : std::uint8_t {
     OpRhythmVolume = 0xA9,
     OpRhythmAccentVol = 0xAA,
     OpRhythmHit = 0xC8,  // the instrument bitmap, then a length
+    OpRhythmInstVolume = 0xD8,  // the instrument bitmap, then their plain volume
 
     // PSG family only
     OpSsgShape = 0xB0,
