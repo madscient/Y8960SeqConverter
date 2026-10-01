@@ -4,6 +4,7 @@ add_library(y8conv_core STATIC
     diag.cpp
     source.cpp
     voicedata.cpp
+    voicepack.cpp
     writer.cpp
 )
 target_include_directories(y8conv_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

@@ -28,11 +28,11 @@ struct Track {
 
 struct VoiceSlot {
     bool isWave = false;  // chunk 02 rather than 01
-    VoiceRecord record{};
+    std::vector<std::uint8_t> record;  // a PackedVoice, or a waveform's 32 bytes
 };
 
-// A software envelope in Y8960's terms: the rates are 0-32 (basic-reference.md,
-// "ソフトウェアエンベロープ"), the level 0-15.
+// Chunk 04: each rate a byte, the frames per step in the high nibble and the
+// step in the low, both 1-15; the level 0-15.
 struct Envelope {
     int ar = 0, dr = 0, sl = 0, rr = 0;
     bool operator==(const Envelope& o) const {
@@ -54,12 +54,13 @@ bool convert(const Song& song, const ConvertOptions& options, const std::string&
              Sequence& seq, Diagnostics& diag);
 
 // A MuSICA envelope rate byte (the counter in the high nibble, the step in the
-// low) as Y8960's 0-32. `exact` is false when no rate of the table has the
-// same counter and step, and the nearest in speed was taken.
+// low) as chunk 04 takes it. MuSICA's counter 0 (256 interrupts) and step 0
+// (never moves) have no place there; for those `exact` is false and the byte
+// nearest in speed is taken.
 int envelopeRate(std::uint8_t musica, bool& exact);
 
-// The 32 byte record a Y8960 FM voice is, for the eight OPLL user voice
-// registers: the inverse of the ROM's OPLL_SETUSER.
-VoiceRecord recordFromOpll(const std::uint8_t* opll, const std::string& label);
+// The chunk 01 record for the eight OPLL user voice registers: the inverse of
+// the ROM's OPLL_SETUSER.
+PackedVoice recordFromOpll(const std::uint8_t* opll);
 
 } // namespace y8

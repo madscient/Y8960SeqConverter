@@ -49,8 +49,8 @@ enum Op : std::uint8_t {
 
     // PSG family only
     OpSsgShape = 0xB0,
-    OpSsgPan = 0xB1,
     OpSoftEnv = 0xB2,   // the software envelope's number, 0 for none; SSGS, SCC, DCSG
+    OpSccVolTable = 0xB3,  // 1: the SCC's volume goes through the ROM's table; 0: as it is
     OpSsgPeriod = 0xDC,  // 16 bits
 };
 

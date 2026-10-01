@@ -34,17 +34,19 @@ constexpr int kNoteOffsetDivider = 11;
 // The Y8960 running state each track starts every round from (bytecode.md,
 // "走行状態").
 constexpr int kInitOctave = 4;
-constexpr int kInitLoudness = 71;
+constexpr int kInitLoudness = 99;
 constexpr int kInitQuant = 8;
 
 // What the drivers start a channel with. MuSICA's are the manual's: volume
-// 60h, instrument 7Ah, Q 8. 推測 for OPLLDRV: its manual gives none. The
-// volume is the one uniskie's OPLDRV_tool assumes (MGSDRV v12, attenuation 3);
-// the instrument is MuSICA's, which extends OPLLDRV's data.
+// 60h, instrument 7Ah, Q 8. OPLLDRV's MSTART leaves the instrument and the
+// volume as the chip has them; these are what FM-BIOS's INIOPL puts there
+// (instrument 11, attenuation 3), and its rhythm_ini gives every rhythm
+// instrument attenuation 3.
 constexpr int kMusicaFmVolume = 0;   // attenuation
 constexpr int kOpllFmVolume = 3;
-constexpr int kDefaultInstrument = 10;
-// 推測: the rhythm parts' starting volume is in neither manual.
+constexpr int kMusicaInstrument = 10;
+constexpr int kOpllInstrument = 11;
+// 推測 for MuSICA: the rhythm's starting volume is not in its manual.
 constexpr int kMusicaRhythmAtt = 0;
 constexpr int kOpllRhythmAtt = 3;
 
@@ -69,16 +71,9 @@ std::string hex2(unsigned v) {
     return std::string{digits[(v >> 4) & 0xF], digits[v & 0xF], 'h'};
 }
 
-// Y8960's software envelope rates, 0-32, as (interrupts, step): the table of
-// basic-reference.md. MuSICA's voice bytes are drawn from the same table (every
-// envelope byte of the 85 sample songs is one of these).
-constexpr std::array<std::array<int, 2>, 33> kEnvRates = {{
-    {15, 1}, {12, 1}, {10, 1}, {9, 1}, {8, 1}, {7, 1}, {6, 1}, {5, 1}, {4, 1}, {7, 2}, {3, 1},
-    {5, 2}, {2, 1}, {5, 3}, {3, 2}, {4, 3}, {1, 1}, {3, 4}, {2, 3}, {3, 5}, {1, 2}, {2, 5},
-    {1, 3}, {2, 7}, {1, 4}, {1, 5}, {1, 6}, {1, 7}, {1, 8}, {1, 9}, {1, 10}, {1, 12}, {1, 15},
-}};
-
-int loudness(int level) { return level * 8 + 7; }
+// A source level 0-15 as Y8960's volume, where V n is 4n + 67: every reader
+// of devices 0-7 takes it back to the same level.
+int loudness(int level) { return level * 4 + 67; }
 
 struct Shared {
     const Song& song;
@@ -107,7 +102,7 @@ struct Shared {
         return static_cast<int>(envelopes.size());
     }
 
-    int intern(bool isWave, const VoiceRecord& record) {
+    int intern(bool isWave, const std::vector<std::uint8_t>& record) {
         for (std::size_t i = 0; i < voices.size(); ++i) {
             if (voices[i].isWave == isWave && voices[i].record == record) return static_cast<int>(i);
         }
@@ -123,9 +118,9 @@ struct Shared {
 struct State {
     // The source driver's.
     int volume = 0;       // FM: attenuation; PSG, SCC: level
-    int instrument = kDefaultInstrument;
+    int instrument = kMusicaInstrument;
     bool haveUser = false;
-    VoiceRecord user{};   // what 83h or 82h last put in the user voice
+    PackedVoice user{};   // what 83h or 82h last put in the user voice
     bool voiceDirty = true;
     bool legato = false;
     int quant = 8;
@@ -245,7 +240,10 @@ public:
     TrackBuilder(Shared& shared, const Channel& ch, bool first)
         : sh_(shared), ch_(ch), first_(first), name_(channelName(shared.song, ch)) {
         const bool musica = shared.song.format == Format::Musica;
-        if (ch.part == Part::Fm) s_.volume = musica ? kMusicaFmVolume : kOpllFmVolume;
+        if (ch.part == Part::Fm) {
+            s_.volume = musica ? kMusicaFmVolume : kOpllFmVolume;
+            s_.instrument = musica ? kMusicaInstrument : kOpllInstrument;
+        }
         // The manual's 60h is the default for every part; on the PSG and the
         // SCC it is the quietest.
         if (ch.part == Part::Psg || ch.part == Part::Scc) s_.volume = 0;
@@ -257,6 +255,9 @@ public:
     std::vector<std::uint8_t> build() {
         out_ = &bytes_;
         if (first_) put(OpTempo, kFrameTempo);
+        // MuSICA writes its level to the SCC's volume register as it is; the
+        // reader's own table would make the quiet levels quieter still.
+        if (ch_.part == Part::Scc) put(OpSccVolTable, 0);
         for (const Node& nd : fold(ch_.steps)) node(nd, 0);
         put(OpEnd);
         return bytes_;
@@ -405,6 +406,12 @@ private:
         switch (e.kind) {
         case SrcEvent::Note: fmNote(e.value, e.length); break;
         case SrcEvent::Rest:
+            // OPLDRV's rest touches no key: a note held by legato sounds on
+            // through it, and the next note continues it (int_note).
+            if (sh_.song.format == Format::Opll && s_.held) {
+                wait(e.length);
+                break;
+            }
             rest(e.length);
             s_.held = false;
             break;
@@ -428,7 +435,10 @@ private:
         case SrcEvent::RomVoice: romVoice(e.value); break;
         case SrcEvent::UserVoice: userVoice(e.addr); break;
         case SrcEvent::Legato: s_.legato = e.value != 0; break;
-        case SrcEvent::Quantize: s_.quant = e.value; break;
+        case SrcEvent::Quantize:
+            // OPLDRV takes Q AND 7, 0 being the whole length.
+            s_.quant = sh_.song.format == Format::Opll ? ((e.value & 7) ? (e.value & 7) : 8) : e.value;
+            break;
         case SrcEvent::RegWrite:
             if (opllexRegister(e.value)) {
                 regWrite(e.value, e.value2, 0);
@@ -442,17 +452,24 @@ private:
     }
 
     void romVoice(int n) {
-        VoiceRecord rec;
-        if (!sh_.options.romVoices.empty()) {
-            const std::uint8_t* p = sh_.options.romVoices.data() + (n & 63) * 8;
-            rec = recordFromOpll(p, "ROM@" + std::to_string(n & 63));
-        } else {
-            rec = presetVoice(n & 63);
+        if ((n & 0x7F) >= 64) {
+            sh_.warning(name_ + ": 82h names voice " + std::to_string(n & 0x7F) +
+                        ", past the ROM's 64; the original reads whatever follows the table, and "
+                        "this takes voice " + std::to_string(n & 63));
         }
-        s_.user = rec;
+        if (!sh_.options.romVoices.empty()) {
+            s_.user = recordFromOpll(sh_.options.romVoices.data() + (n & 63) * 8);
+        } else {
+            // FM-BIOS's 82h writes the ROM's eight bytes and nothing else, and
+            // its notes have no transpose to add (int_e_voice, int_note). The
+            // preset's transpose is MSX-AUDIO BASIC's, for a voice that mostly
+            // has the same multipliers as the ROM's.
+            s_.user = packVoice(presetVoice(n & 63));
+            s_.user[1] = 0;
+        }
         s_.haveUser = true;
-        s_.instrument = 0;
-        s_.voiceDirty = true;
+        // Loaded, not selected: 70h selects it (FM-BIOS's int_e_voice).
+        if (s_.instrument == 0) s_.voiceDirty = true;
     }
 
     void userVoice(std::uint16_t addr) {
@@ -471,18 +488,16 @@ private:
         for (int i = 0; i < size; ++i) raw[i] = song.at(addr + static_cast<std::uint32_t>(i));
 
         if (ch_.part == Part::Fm) {
-            s_.user = recordFromOpll(raw, "V" + hex4(addr).substr(0, 4));
+            s_.user = recordFromOpll(raw);
             s_.haveUser = true;
-            // OPLLDRV selects the voice it loads; MuSICA leaves that to 70h
-            // (the manual). 推測 for OPLLDRV: its manual does not say, and this
-            // is how uniskie's OPLDRV_tool reads it.
-            if (song.format == Format::Opll) s_.instrument = 0;
+            // Both drivers only load the voice, and 70h selects it (FM-BIOS's
+            // int_u_voice, MuSICA's manual).
             if (s_.instrument == 0) s_.voiceDirty = true;
             return;
         }
 
         // The software envelope, the first four bytes. Y8960's works as
-        // MuSICA's does and takes the rates as 0-32 rather than as bytes.
+        // MuSICA's does, and chunk 04 takes the rate bytes as they are.
         bool exactA = true, exactD = true, exactR = true;
         Envelope env;
         env.ar = envelopeRate(raw[0], exactA);
@@ -507,28 +522,27 @@ private:
             const int mixer = ((raw[5] & 0x01) ? 0x20 : 0) | (noise ? 0x40 : 0);
             voice(mixer);
         } else {
-            VoiceRecord wave{};
-            std::copy(raw + 4, raw + 36, wave.begin());
-            voice(256 + slot(true, wave));
+            voice(256 + slot(true, std::vector<std::uint8_t>(raw + 4, raw + 36)));
         }
     }
 
-    int slot(bool isWave, const VoiceRecord& rec) { return sh_.intern(isWave, rec); }
+    int slot(bool isWave, const std::vector<std::uint8_t>& rec) { return sh_.intern(isWave, rec); }
+    int slot(const PackedVoice& v) { return sh_.intern(false, {v.begin(), v.end()}); }
 
     void fmVoice() {
         if (!s_.voiceDirty) return;
         s_.voiceDirty = false;
         if (s_.instrument != 0) {
-            voice(64 + s_.instrument);  // bank 0, the YM2413's own
+            voice(s_.instrument);  // bank 0, the YM2413's own
             return;
         }
         if (!s_.haveUser) {
             sh_.warning(name_ + ": the user voice plays before one is loaded; it sounds as a "
                                 "voice of all zero registers");
-            s_.user = recordFromOpll(std::array<std::uint8_t, 8>{}.data(), "ZERO");
+            s_.user = recordFromOpll(std::array<std::uint8_t, 8>{}.data());
             s_.haveUser = true;
         }
-        voice(256 + slot(false, s_.user));
+        voice(256 + slot(s_.user));
     }
 
     // Legato holds the note on past its length; the next note continues it
@@ -595,7 +609,8 @@ private:
         if (ch_.part == Part::Scc && s_.yVoice < 0) {
             sh_.warning(name_ + ": notes play before a waveform is set; they take the Y8960 "
                                 "preset waveform 0");
-            voice(256 + slot(true, presetWave(0)));
+            const VoiceRecord w = presetWave(0);
+            voice(256 + slot(true, {w.begin(), w.end()}));
         }
         loud(s_.volume);
         melodyNote(srcNote, len);
@@ -607,12 +622,13 @@ private:
         switch (e.kind) {
         case SrcEvent::RhythmHit: hit(e.value, e.length); break;
         case SrcEvent::RhythmVolume:
-            // 推測: no bits set means every instrument. The manuals leave it
-            // open; uniskie's OPLDRV_tool reads it so.
+            // Both drivers set the instruments whose bits are set, and with
+            // none they set nothing (FM-BIOS's next_event2, BGM.BIN's D63Ah).
             for (int i = 0; i < 5; ++i) {
-                if (e.value == 0 || (e.value & (0x10 >> i))) s_.rhythmAtt[static_cast<std::size_t>(i)] = e.value2;
+                if (e.value & (0x10 >> i)) s_.rhythmAtt[static_cast<std::size_t>(i)] = e.value2;
             }
             break;
+        case SrcEvent::Wait: wait(e.length); break;
         case SrcEvent::RegWrite:
             if (opllexRegister(e.value)) {
                 regWrite(e.value, e.value2, 0);
@@ -722,48 +738,40 @@ int partOrder(Part p) {
 int envelopeRate(std::uint8_t musica, bool& exact) {
     const int count = musica >> 4;
     const int step = musica & 0x0F;
-    for (std::size_t i = 0; i < kEnvRates.size(); ++i) {
-        if (kEnvRates[i][0] == count && kEnvRates[i][1] == step) {
-            exact = true;
-            return static_cast<int>(i);
-        }
-    }
-    exact = false;
+    exact = count != 0 && step != 0;
+    if (exact) return musica;
     // MuSICA takes a counter of 0 as 256 interrupts. A step of 0 never moves,
     // which the slowest rate is nearest to.
     const double speed = static_cast<double>(step) / (count == 0 ? 256 : count);
     int best = 0;
     double bestDiff = 1e9;
-    for (std::size_t i = 0; i < kEnvRates.size(); ++i) {
-        const double diff =
-            std::fabs(static_cast<double>(kEnvRates[i][1]) / kEnvRates[i][0] - speed);
-        if (diff < bestDiff) {
-            bestDiff = diff;
-            best = static_cast<int>(i);
+    for (int c = 1; c <= 15; ++c) {
+        for (int d = 1; d <= 15; ++d) {
+            const double diff = std::fabs(static_cast<double>(d) / c - speed);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                best = c << 4 | d;
+            }
         }
     }
     return best;
 }
 
-VoiceRecord recordFromOpll(const std::uint8_t* o, const std::string& label) {
-    VoiceRecord r{};
-    for (int i = 0; i < 8; ++i) {
-        r[static_cast<std::size_t>(i)] =
-            static_cast<std::uint8_t>(i < static_cast<int>(label.size()) ? label[static_cast<std::size_t>(i)] : ' ');
-    }
-    // voicedat.asm: 10 is C0h (bit3-1 FB, bit0 CNT), 16-23 the modulator and
-    // 24-31 the carrier, each 20h 40h 60h 80h, a velocity, the waveform.
-    r[10] = static_cast<std::uint8_t>((o[3] & 0x07) << 1);
-    r[16] = o[0];
-    r[17] = o[2];
-    r[18] = o[4];
-    r[19] = o[6];
-    r[21] = static_cast<std::uint8_t>((o[3] >> 3) & 1);  // DM
-    r[24] = o[1];
-    r[25] = static_cast<std::uint8_t>(o[3] & 0xC0);      // the carrier's KSL; OPLL has no carrier TL
-    r[26] = o[5];
-    r[27] = o[7];
-    r[29] = static_cast<std::uint8_t>((o[3] >> 4) & 1);  // DC
+PackedVoice recordFromOpll(const std::uint8_t* o) {
+    // Chunk 01: C0h (bit3-1 FB, bit0 CNT), the transpose, then the modulator
+    // and the carrier, each 40h 60h 80h 20h and the waveform.
+    PackedVoice r{};
+    r[0] = static_cast<std::uint8_t>((o[3] & 0x07) << 1);
+    r[2] = o[2];
+    r[3] = o[4];
+    r[4] = o[6];
+    r[5] = o[0];
+    r[6] = static_cast<std::uint8_t>((o[3] >> 3) & 1);   // DM
+    r[7] = static_cast<std::uint8_t>(o[3] & 0xC0);       // the carrier's KSL; OPLL has no carrier TL
+    r[8] = o[5];
+    r[9] = o[7];
+    r[10] = o[1];
+    r[11] = static_cast<std::uint8_t>((o[3] >> 4) & 1);  // DC
     return r;
 }
 

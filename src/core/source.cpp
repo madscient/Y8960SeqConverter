@@ -108,7 +108,10 @@ private:
         case 0x80:
         case 0x81:
             e.kind = SrcEvent::Sustain;
-            e.value = c & 1;
+            // FM-BIOS's manual has 80h release the sustain and 81h set it, but
+            // its OPLDRV does the opposite (int_sus_on at 80h), and that is
+            // what played.
+            e.value = musica ? (c & 1) : (c == 0x80);
             return true;
         case 0x82:
             // MuSICA's driver reads the byte and does nothing with it.
@@ -168,6 +171,11 @@ private:
         if (musica && c == 0xC0) {
             e.kind = SrcEvent::RegWrite;
             return byte(p, e.value) && byte(p, e.value2);
+        }
+        // BGM.BIN reads a length after C1h and strikes nothing (D4A8h).
+        if (musica && c == 0xC1) {
+            e.kind = SrcEvent::Wait;
+            return length(p, e.length);
         }
         return unknown(e.at, c);
     }

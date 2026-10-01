@@ -14,19 +14,20 @@ using test::checkBytes;
 
 // The ROM's OPLL_SETUSER (Y8960BasicExtension src/dev/opllex.asm), written out
 // here the way the ROM reads the record, so that recordFromOpll is checked
-// against the reader rather than against itself.
-std::array<std::uint8_t, 8> setUser(const y8::VoiceRecord& r) {
+// against the reader rather than against itself. The record's offsets are the
+// ROM's VP_* and VO_*.
+std::array<std::uint8_t, 8> setUser(const y8::PackedVoice& r) {
     std::array<std::uint8_t, 8> o{};
-    o[0] = r[16];
-    o[1] = r[24];
-    o[2] = r[17];
-    o[3] = static_cast<std::uint8_t>((r[25] & 0xC0) | (((r[29] >> 4) | (r[29] << 4)) & 0x10) |
-                                     (((r[21] >> 5) | (r[21] << 3)) & 0x08) |
-                                     (((r[10] >> 1) | (r[10] << 7)) & 0x07));
-    o[4] = r[18];
-    o[5] = r[26];
-    o[6] = r[19];
-    o[7] = r[27];
+    o[0] = r[5];
+    o[1] = r[10];
+    o[2] = r[2];
+    o[3] = static_cast<std::uint8_t>((r[7] & 0xC0) | (((r[11] >> 4) | (r[11] << 4)) & 0x10) |
+                                     (((r[6] >> 5) | (r[6] << 3)) & 0x08) |
+                                     (((r[0] >> 1) | (r[0] << 7)) & 0x07));
+    o[4] = r[3];
+    o[5] = r[8];
+    o[6] = r[4];
+    o[7] = r[9];
     return o;
 }
 
@@ -35,10 +36,29 @@ void recordRoundTrip() {
         if (b3 & 0x20) continue;  // always 0 on the OPLL
         std::array<std::uint8_t, 8> o = {0x31, 0x11, 0x0E, static_cast<std::uint8_t>(b3),
                                          0xD9, 0xB2, 0x11, 0xF4};
-        y8::VoiceRecord r = y8::recordFromOpll(o.data(), "TEST");
+        y8::PackedVoice r = y8::recordFromOpll(o.data());
         std::array<std::uint8_t, 8> back = setUser(r);
         check(back == o, "record round trip, byte 3 = " + std::to_string(b3));
     }
+}
+
+void packPreset() {
+    // Piano 1: C0h 0Ah, no transpose; the modulator 31h 0Eh D9h 11h, the
+    // carrier 11h 00h B2h F4h, in the order 20h 40h 60h 80h.
+    const y8::PackedVoice piano = y8::packVoice(y8::presetVoice(0));
+    checkBytes("packed Piano 1", std::vector<std::uint8_t>(piano.begin(), piano.end()),
+               bytes({0x0A, 0x00, 0x0E, 0xD9, 0x11, 0x31, 0x00, 0x00, 0xB2, 0xF4, 0x11, 0x00}));
+    y8::VoiceRecord b{};
+    b[8] = 0x80;  // half a semitone rounds up
+    b[9] = 0x01;
+    b[10] = 0xFF;
+    b[21] = 0xFF;
+    const y8::PackedVoice p = y8::packVoice(b);
+    check(p[1] == 2, "the transpose rounds half up");
+    check(p[0] == 0x0F, "C0h keeps bit3-0");
+    check(p[6] == 0x03, "the waveform keeps bit1-0");
+    b[8] = 0x7F;
+    check(y8::packVoice(b)[1] == 1, "the transpose rounds down below half");
 }
 
 bool convertBytes(const std::vector<std::uint8_t>& file, y8::Sequence& seq,
@@ -66,10 +86,53 @@ void opllMelody() {
     check(seq.tracks.size() == 1, "channels with nothing in them take no track");
     if (seq.tracks.empty()) return;
     check(seq.tracks[0].device == 1 && seq.tracks[0].channel == 0, "FM1 is OPLLEX1 channel 0");
-    // T75, V15, the YM2413's instrument 2, and the source's O4C an octave
-    // down, where it sounds.
+    // T75, V15, the YM2413's instrument 2 (bank 0), and the source's O4C an
+    // octave down, where it sounds.
     checkBytes("OPLLDRV melody", seq.tracks[0].bytes,
-               bytes({0x84, 0x4B, 0x81, 0x7F, 0x82, 0x42, 0x41, 0x00, 0x18, 0x0C, 0x0C, 0xFF}));
+               bytes({0x84, 0x4B, 0x81, 0x7F, 0x82, 0x02, 0x41, 0x00, 0x18, 0x0C, 0x0C, 0xFF}));
+}
+
+// Melody 9 with channel 1 alone, its events `ev`.
+std::vector<std::uint8_t> opllOneChannel(const std::vector<int>& ev) {
+    std::vector<std::uint8_t> f = bytes({0x12, 0x00});
+    for (int i = 1; i < 9; ++i) {
+        f.push_back(0x00);
+        f.push_back(0x00);
+    }
+    for (int b : ev) f.push_back(static_cast<std::uint8_t>(b));
+    f.push_back(0xFF);
+    return f;
+}
+
+void opllRomVoice() {
+    // 82h 01 (Piano 2, whose preset transposes up an octave), 70h, O4C for 24.
+    y8::Sequence seq;
+    check(convertBytes(opllOneChannel({0x82, 0x01, 0x70, 0x25, 0x18}), seq),
+          "OPLLDRV ROM voice converts");
+    if (seq.voices.size() != 1) {
+        check(false, "one voice");
+        return;
+    }
+    // FM-BIOS plays the ROM's voice untransposed.
+    y8::PackedVoice want = y8::packVoice(y8::presetVoice(1));
+    want[1] = 0;
+    checkBytes("OPLLDRV ROM voice", seq.voices[0].record,
+               std::vector<std::uint8_t>(want.begin(), want.end()));
+}
+
+void opllLoadOnly() {
+    // 82h and 83h load the user voice and leave the instrument as it is: here
+    // FM-BIOS's starting 11, attenuation 3 (V12).
+    y8::Sequence seq;
+    check(convertBytes(opllOneChannel({0x82, 0x01, 0x25, 0x18}), seq),
+          "OPLLDRV 82h without 70h converts");
+    if (seq.tracks.size() != 1) {
+        check(false, "one track");
+        return;
+    }
+    check(seq.voices.empty(), "a user voice nothing selects is not carried");
+    checkBytes("OPLLDRV 82h without 70h", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0x82, 0x0B, 0x81, 0x73, 0x41, 0x00, 0x18, 0xFF}));
 }
 
 void opllUnused() {
@@ -112,19 +175,23 @@ void opllRhythm() {
                       0xFF}));
 }
 
-void opllRhythmAll() {
+// Rhythm and melody 6, the rhythm alone, its events `ev`.
+std::vector<std::uint8_t> opllRhythmOnly(const std::vector<int>& ev) {
     std::vector<std::uint8_t> f = bytes({0x0E, 0x00});
     for (int i = 1; i < 7; ++i) {
-        f.push_back(0x18);
+        f.push_back(0x00);
         f.push_back(0x00);
     }
+    for (int b : ev) f.push_back(static_cast<std::uint8_t>(b));
+    f.push_back(0xFF);
+    return f;
+}
+
+void opllRhythmAll() {
     // every instrument at attenuation 7, level 8, then bass and hi-hat twice
-    for (int b : {0xA0, 0x07, 0x31, 0x0C, 0x31, 0x0C, 0xFF, 0x00, 0x00, 0x00, 0xFF}) {
-        f.push_back(static_cast<std::uint8_t>(b));
-    }
-    f[0x18] = 0xFF;
     y8::Sequence seq;
-    check(convertBytes(f, seq), "OPLLDRV rhythm, one volume for all converts");
+    check(convertBytes(opllRhythmOnly({0xBF, 0x07, 0x31, 0x0C, 0x31, 0x0C}), seq),
+          "OPLLDRV rhythm, one volume for all converts");
     if (seq.tracks.size() != 1) {
         check(false, "one rhythm track");
         return;
@@ -134,6 +201,54 @@ void opllRhythmAll() {
     // strike sets nothing again.
     checkBytes("OPLLDRV rhythm, one volume for all", seq.tracks[0].bytes,
                bytes({0x84, 0x4B, 0xA9, 0x08, 0xA8, 0x00, 0xC8, 0x11, 0x0C, 0xC8, 0x11, 0x0C, 0xFF}));
+}
+
+void opllRhythmNoBits() {
+    // A volume naming no instrument sets none (FM-BIOS's next_event2): the
+    // strike keeps the starting attenuation 3, level 12.
+    y8::Sequence seq;
+    check(convertBytes(opllRhythmOnly({0xA0, 0x07, 0x31, 0x0C}), seq),
+          "OPLLDRV rhythm volume naming none converts");
+    if (seq.tracks.size() != 1) {
+        check(false, "one rhythm track");
+        return;
+    }
+    checkBytes("OPLLDRV rhythm volume naming none", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0xA9, 0x0C, 0xA8, 0x00, 0xC8, 0x11, 0x0C, 0xFF}));
+}
+
+void opllSustain() {
+    // 80h sets the sustain and 81h releases it, as FM-BIOS's OPLDRV does.
+    y8::Sequence seq;
+    check(convertBytes(opllOneChannel({0x71, 0x80, 0x25, 0x18, 0x81, 0x25, 0x18}), seq),
+          "OPLLDRV sustain converts");
+    if (seq.tracks.size() != 1) return;
+    checkBytes("OPLLDRV sustain", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0xE0, 0x20, 0x20, 0xDF, 0x82, 0x01, 0x81, 0x73, 0x41, 0x00, 0x18,
+                      0xE0, 0x20, 0x00, 0xDF, 0x00, 0x18, 0xFF}));
+}
+
+void opllLegatoRest() {
+    // Legato on, O4C, a rest, legato off, O4D: OPLDRV's rest touches no key,
+    // so the C sounds through it and the D continues it.
+    y8::Sequence seq;
+    check(convertBytes(opllOneChannel({0x71, 0x85, 0x25, 0x18, 0x00, 0x0C, 0x84, 0x27, 0x18}), seq),
+          "OPLLDRV legato rest converts");
+    if (seq.tracks.size() != 1) return;
+    checkBytes("OPLLDRV legato rest", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0x82, 0x01, 0x81, 0x73, 0x41, 0x00, 0x18, 0x0E, 0x0C, 0x45, 0x02,
+                      0x18, 0xFF}));
+}
+
+void opllQuantZero() {
+    // OPLDRV takes Q AND 7, 0 being the whole length: Q0 is Q8, Q9 is Q1.
+    y8::Sequence seq;
+    check(convertBytes(opllOneChannel({0x71, 0x86, 0x00, 0x25, 0x18, 0x86, 0x09, 0x25, 0x18}), seq),
+          "OPLLDRV Q0 converts");
+    if (seq.tracks.size() != 1) return;
+    checkBytes("OPLLDRV Q0", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0x82, 0x01, 0x81, 0x73, 0x41, 0x00, 0x18, 0x83, 0x01, 0x00, 0x18,
+                      0xFF}));
 }
 
 std::vector<std::uint8_t> musicaFile(std::uint16_t base, const std::vector<std::uint8_t>& body) {
@@ -172,7 +287,7 @@ void musicaLoop() {
     // later rounds do not, so it is written out and the other two loop. The
     // loop's body names its octave outright. The FM's O5C is Y8960's O4C.
     checkBytes("MuSICA loop", seq.tracks[0].bytes,
-               bytes({0x84, 0x4B, 0x82, 0x4A, 0x81, 0x7F, 0x00, 0x0C,
+               bytes({0x84, 0x4B, 0x82, 0x0A, 0x81, 0x7F, 0x00, 0x0C,
                       0x42, 0x80, 0x04, 0x00, 0x0C, 0xE2, 0x02, 0xF8, 0xFF, 0xFF}));
 }
 
@@ -189,7 +304,7 @@ void fmLowest() {
     }
     // MuSICA's FM O1C sounds as C0: octave 0.
     checkBytes("FM O1", seq.tracks[0].bytes,
-               bytes({0x84, 0x4B, 0x82, 0x4A, 0x81, 0x7F, 0x80, 0x00, 0x00, 0x0C, 0xFF}));
+               bytes({0x84, 0x4B, 0x82, 0x0A, 0x81, 0x7F, 0x80, 0x00, 0x00, 0x0C, 0xFF}));
 }
 
 // One FM block played once, the given commands in it.
@@ -211,7 +326,7 @@ void legatoBracket() {
           "legato bracket converts");
     if (seq.tracks.empty()) return;
     checkBytes("legato bracket", seq.tracks[0].bytes,
-               bytes({0x84, 0x4B, 0x82, 0x4A, 0x81, 0x7F, 0x40, 0x02, 0x1E,
+               bytes({0x84, 0x4B, 0x82, 0x0A, 0x81, 0x7F, 0x40, 0x02, 0x1E,
                       0x83, 0x06, 0x45, 0x02, 0x1E, 0xFF}));
 }
 
@@ -222,7 +337,7 @@ void legatoLate() {
     check(fmBlock({0x3F, 0x1E, 0x85, 0x3F, 0x1E}, seq), "late legato converts");
     if (seq.tracks.empty()) return;
     checkBytes("late legato", seq.tracks[0].bytes,
-               bytes({0x84, 0x4B, 0x82, 0x4A, 0x81, 0x7F, 0x40, 0x02, 0x1E, 0x02, 0x1E, 0xFF}));
+               bytes({0x84, 0x4B, 0x82, 0x0A, 0x81, 0x7F, 0x40, 0x02, 0x1E, 0x02, 0x1E, 0xFF}));
 }
 
 void musicaFold() {
@@ -249,7 +364,7 @@ void musicaFold() {
     }
     // The first round of A B, then a loop of two more.
     checkBytes("MuSICA fold", seq.tracks[0].bytes,
-               bytes({0x84, 0x4B, 0x82, 0x4A, 0x81, 0x7F, 0x00, 0x0C, 0x02, 0x0C,
+               bytes({0x84, 0x4B, 0x82, 0x0A, 0x81, 0x7F, 0x00, 0x0C, 0x02, 0x0C,
                       0x42, 0x80, 0x04, 0x00, 0x0C, 0x02, 0x0C, 0xE2, 0x02, 0xF6, 0xFF, 0xFF}));
 }
 
@@ -281,26 +396,82 @@ void psgVoice() {
     check(seq.envelopes.size() == 1, "one envelope");
     if (seq.envelopes.size() == 1) {
         const y8::Envelope& e = seq.envelopes[0];
-        check(e.ar == 16 && e.dr == 24 && e.sl == 8 && e.rr == 10,
-              "the envelope's rates as Y8960's 0-32");
+        check(e.ar == 0x11 && e.dr == 0x14 && e.sl == 8 && e.rr == 0x31,
+              "the envelope's rates are MuSICA's bytes");
     }
 }
 
 void envelopeRates() {
     bool exact = false;
-    check(y8::envelopeRate(0xF1, exact) == 0 && exact, "15 interrupts, 1 a step, is 0");
-    check(y8::envelopeRate(0x1F, exact) == 32 && exact, "1 interrupt, 15 a step, is 32");
-    check(y8::envelopeRate(0x72, exact) == 9 && exact, "7 interrupts, 2 a step, is 9");
-    check(y8::envelopeRate(0x22, exact) == 16 && !exact, "2 and 2 is nearest 1 and 1");
-    check(y8::envelopeRate(0x00, exact) == 0 && !exact, "a step of 0 is nearest the slowest");
+    check(y8::envelopeRate(0xF1, exact) == 0xF1 && exact, "15 interrupts, 1 a step, as it is");
+    check(y8::envelopeRate(0x1F, exact) == 0x1F && exact, "1 interrupt, 15 a step, as it is");
+    check(y8::envelopeRate(0x22, exact) == 0x22 && exact, "a pair outside MuSICA's 33, as it is");
+    check(y8::envelopeRate(0x30, exact) == 0xF1 && !exact, "a step of 0 is nearest the slowest");
+    check(y8::envelopeRate(0x0F, exact) == 0xF1 && !exact,
+          "a counter of 0, 256 interrupts, is nearest the slowest");
 }
 
 void envelopeChunk() {
     y8::Sequence seq;
-    seq.envelopes.push_back({16, 20, 8, 10});
+    seq.envelopes.push_back({0x11, 0x14, 8, 0x31});
     std::vector<std::uint8_t> b = y8::writeBlock(seq);
     checkBytes("envelope chunk", std::vector<std::uint8_t>(b.begin() + 7, b.end()),
-               bytes({0x04, 0x05, 0x00, 0x01, 16, 20, 8, 10}));
+               bytes({0x04, 0x05, 0x00, 0x01, 0x11, 0x14, 0x08, 0x31}));
+}
+
+// A MuSICA file in mode 0 whose rhythm (channel 7) plays the block `ev` once.
+std::vector<std::uint8_t> musicaRhythm(const std::vector<int>& ev) {
+    const std::uint16_t base = 0xA000;
+    std::vector<std::uint8_t> body = musicaHeader(6, base + 35);
+    body[0] = 0;
+    for (int x : {0x28, 0xA0, 0x01, 0x00, 0x00}) body.push_back(static_cast<std::uint8_t>(x));
+    body.resize(0x28, 0);
+    for (int x : ev) body.push_back(static_cast<std::uint8_t>(x));
+    body.push_back(0xFF);
+    return musicaFile(base, body);
+}
+
+void musicaRhythmEvents() {
+    // A volume naming no instrument sets none, and C1h waits (BGM.BIN): the
+    // strike keeps MuSICA's starting attenuation 0, level 15.
+    y8::Sequence seq;
+    check(convertBytes(musicaRhythm({0xA0, 0x07, 0x31, 0x0C, 0xC1, 0x18}), seq),
+          "MuSICA rhythm events convert");
+    if (seq.tracks.size() != 1) {
+        check(false, "one rhythm track");
+        return;
+    }
+    checkBytes("MuSICA rhythm events", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0xA9, 0x0F, 0xA8, 0x00, 0xC8, 0x11, 0x0C, 0x0E, 0x18, 0xFF}));
+}
+
+void sccTrack() {
+    const std::uint16_t base = 0xA000;
+    std::vector<std::uint8_t> body = musicaHeader(12, base + 35);  // SCC1
+    // the block at 28h once; O4C for 4 before any waveform
+    for (int x : {0x28, 0xA0, 0x01, 0x00, 0x00}) body.push_back(static_cast<std::uint8_t>(x));
+    body.resize(0x28, 0);
+    for (int x : {0x25, 0x04, 0xFF}) body.push_back(static_cast<std::uint8_t>(x));
+    y8::Sequence seq;
+    check(convertBytes(musicaFile(base, body), seq), "SCC track converts");
+    if (seq.tracks.size() != 1) {
+        check(false, "one track");
+        return;
+    }
+    check(seq.tracks[0].device == 7 && seq.tracks[0].channel == 0, "SCC1 is SCC channel 0");
+    // The SCC's volume without the table, the preset waveform 0, MuSICA's
+    // starting level 0 as V0, the note.
+    checkBytes("SCC track", seq.tracks[0].bytes,
+               bytes({0x84, 0x4B, 0xB3, 0x00, 0x85, 0x00, 0x81, 0x43, 0x00, 0x04, 0xFF}));
+}
+
+void voiceChunk() {
+    y8::Sequence seq;
+    const y8::PackedVoice v = y8::packVoice(y8::presetVoice(0));
+    seq.voices.push_back({false, {v.begin(), v.end()}});
+    std::vector<std::uint8_t> b = y8::writeBlock(seq);
+    check(b.size() == 7 + 3 + 13, "an FM voice is 12 bytes and its index");
+    check(b[7] == 0x01 && b[8] == 13 && b[9] == 0 && b[10] == 0, "the FM voice is chunk 01, slot 0");
 }
 
 void blockHeader() {
@@ -311,7 +482,8 @@ void blockHeader() {
     t.channel = 2;
     t.bytes = bytes({0xFF});
     seq.tracks.push_back(t);
-    seq.voices.push_back({true, y8::presetWave(0)});
+    const y8::VoiceRecord w = y8::presetWave(0);
+    seq.voices.push_back({true, {w.begin(), w.end()}});
     std::vector<std::uint8_t> b = y8::writeBlock(seq);
     check(b.size() == 7 + 3 + 4 + 3 + 33, "block size");
     check(b[5] == (b.size() & 0xFF) && b[6] == (b.size() >> 8), "the header holds the size");
@@ -324,10 +496,17 @@ void blockHeader() {
 
 int main() {
     recordRoundTrip();
+    packPreset();
     opllMelody();
     opllUnused();
+    opllRomVoice();
+    opllLoadOnly();
     opllRhythm();
     opllRhythmAll();
+    opllRhythmNoBits();
+    opllSustain();
+    opllLegatoRest();
+    opllQuantZero();
     musicaLoop();
     musicaFold();
     legatoBracket();
@@ -337,5 +516,8 @@ int main() {
     blockHeader();
     envelopeRates();
     envelopeChunk();
+    sccTrack();
+    musicaRhythmEvents();
+    voiceChunk();
     return test::report("convert_test");
 }
