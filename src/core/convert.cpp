@@ -50,7 +50,8 @@ constexpr int kMusicaFmVolume = 0;   // attenuation
 constexpr int kOpllFmVolume = 3;
 constexpr int kMusicaInstrument = 10;
 constexpr int kOpllInstrument = 11;
-// 推測 for MuSICA: the rhythm's starting volume is not in its manual.
+// MuSICA's rhythm volume is not in its manual; BGM.BIN zeroes 36h-38h as it
+// starts playing (D18Eh).
 constexpr int kMusicaRhythmAtt = 0;
 constexpr int kOpllRhythmAtt = 3;
 
