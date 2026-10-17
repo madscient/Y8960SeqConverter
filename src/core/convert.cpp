@@ -12,8 +12,8 @@ namespace y8 {
 namespace {
 
 constexpr int kDevSSGS = 0;
-constexpr int kDevOPLLEX1 = 1;
-constexpr int kDevSCC = 7;
+constexpr int kDevOPLLEX = 1;
+constexpr int kDevSCC = 3;
 constexpr int kRhythmChannel = 10;
 constexpr int kTrackCount = 16;
 
@@ -27,7 +27,7 @@ constexpr int kLengthMax = 8191;
 // A source note n (01h being O1C) as a Y8960 note number, the same pitch in
 // Hz. Y8960's O4 is C4 on every chip. MuSICA's PSG and SCC are too, but its FM
 // plays O4 on block 3, an octave below (BGM.BIN's note code and F-Number
-// table). 推測 for OPLLDRV: taken to be MuSICA's, as FM-BIOS was not read.
+// table). OPLLDRV's FM is the same (FM-BIOS's f_num_data and int_note).
 constexpr int kNoteOffsetFm = -1;
 constexpr int kNoteOffsetDivider = 11;
 
@@ -36,6 +36,10 @@ constexpr int kNoteOffsetDivider = 11;
 constexpr int kInitOctave = 4;
 constexpr int kInitLoudness = 99;
 constexpr int kInitQuant = 8;
+
+// 0 is the centre too, but only by the hardware side's word; 128 is the
+// cartridge's own.
+constexpr int kPanCentre = 128;
 
 // What the drivers start a channel with. MuSICA's are the manual's: volume
 // 60h, instrument 7Ah, Q 8. OPLLDRV's MSTART leaves the instrument and the
@@ -50,7 +54,9 @@ constexpr int kOpllInstrument = 11;
 constexpr int kMusicaRhythmAtt = 0;
 constexpr int kOpllRhythmAtt = 3;
 
-// The registers OPLLEX takes a write to (basic-reference.md, `Y`).
+// The YM2413's registers that OPLLEX takes a write to (basic-reference.md,
+// `Y`). The bank and panpot registers OPLLEX adds are left out: a write there
+// reached nothing on the source's chip.
 bool opllexRegister(int r) {
     return r <= 0x07 || (r >= 0x0E && r <= 0x18) || (r >= 0x20 && r <= 0x28) ||
            (r >= 0x30 && r <= 0x38);
@@ -72,7 +78,7 @@ std::string hex2(unsigned v) {
 }
 
 // A source level 0-15 as Y8960's volume, where V n is 4n + 67: every reader
-// of devices 0-7 takes it back to the same level.
+// of devices 0-3 takes it back to the same level.
 int loudness(int level) { return level * 4 + 67; }
 
 struct Shared {
@@ -255,6 +261,9 @@ public:
     std::vector<std::uint8_t> build() {
         out_ = &bytes_;
         if (first_) put(OpTempo, kFrameTempo);
+        // Both drivers' chips are mono. The panpot is no running state and
+        // outlives the sequence, so what an earlier song left would stay.
+        if (ch_.part != Part::Scc) put(OpPan, kPanCentre);
         // MuSICA writes its level to the SCC's volume register as it is; the
         // reader's own table would make the quiet levels quieter still.
         if (ch_.part == Part::Scc) put(OpSccVolTable, 0);
@@ -821,11 +830,11 @@ bool convert(const Song& song, const ConvertOptions& options, const std::string&
         t.name = channelName(song, ch);
         switch (ch.part) {
         case Part::Fm:
-            t.device = kDevOPLLEX1;
+            t.device = kDevOPLLEX;
             t.channel = ch.partIndex;
             break;
         case Part::Rhythm:
-            t.device = kDevOPLLEX1;
+            t.device = kDevOPLLEX;
             t.channel = kRhythmChannel;
             break;
         case Part::Psg:

@@ -27,6 +27,7 @@ enum Op : std::uint8_t {
     OpTempo = 0x84,
     OpSeqVoice = 0x85,  // the slot in this sequence's own voice set
     OpSegno = 0x86,     // a mark with its number; nothing plays it
+    OpPan = 0x87,       // the chip's panpot register value: 1 left, 128 centre, 255 right
     OpNoteAbs = 0xC0,   // note number, then a length
     OpBend = 0xD0,
     OpBendRel = 0xD1,
@@ -49,7 +50,7 @@ enum Op : std::uint8_t {
 
     // PSG family only
     OpSsgShape = 0xB0,
-    OpSoftEnv = 0xB2,   // the software envelope's number, 0 for none; SSGS, SCC, DCSG
+    OpSoftEnv = 0xB2,   // the software envelope's number, 0 for none; SSGS and SCC
     OpSccVolTable = 0xB3,  // 1: the SCC's volume goes through the ROM's table; 0: as it is
     OpSsgPeriod = 0xDC,  // 16 bits
 };

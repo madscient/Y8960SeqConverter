@@ -64,8 +64,8 @@ MuSICA の MML（`.MSD`）と音色ファイル（`.VCD`）は読まない。MuS
 
 | 名前 | 元のチャンネル | Y8960 |
 |---|---|---|
-| `FM1`-`FM9` | FM 音源のメロディ | OPLLEX1 の CH0-8 |
-| `RHY` | FM 音源のリズム | OPLLEX1 の CH10 |
+| `FM1`-`FM9` | FM 音源のメロディ | OPLLEX の CH0-8 |
+| `RHY` | FM 音源のリズム | OPLLEX の CH10 |
 | `PSG1`-`PSG3` | MuSICA の PSG（チャンネル 10-12） | SSGS の CH0-2 |
 | `SCC1`-`SCC5` | MuSICA の SCC（チャンネル 13-17） | SCC の CH0-4 |
 
