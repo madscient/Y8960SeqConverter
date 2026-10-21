@@ -264,7 +264,7 @@ public:
         if (first_) put(OpTempo, kFrameTempo);
         // Both drivers' chips are mono. The panpot is no running state and
         // outlives the sequence, so what an earlier song left would stay.
-        if (ch_.part != Part::Scc) put(OpPan, kPanCentre);
+        put(OpPan, kPanCentre);
         // MuSICA writes its level to the SCC's volume register as it is; the
         // reader's own table would make the quiet levels quieter still.
         if (ch_.part == Part::Scc) put(OpSccVolTable, 0);

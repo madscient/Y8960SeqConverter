@@ -459,10 +459,10 @@ void sccTrack() {
         return;
     }
     check(seq.tracks[0].device == 3 && seq.tracks[0].channel == 0, "SCC1 is SCC channel 0");
-    // The SCC's volume without the table, the preset waveform 0, MuSICA's
-    // starting level 0 as V0, the note.
+    // The panpot at the centre, the SCC's volume without the table, the preset
+    // waveform 0, MuSICA's starting level 0 as V0, the note.
     checkBytes("SCC track", seq.tracks[0].bytes,
-               bytes({0x84, 0x4B, 0xB3, 0x00, 0x85, 0x00, 0x81, 0x43, 0x00, 0x04, 0xFF}));
+               bytes({0x84, 0x4B, 0x87, 0x80, 0xB3, 0x00, 0x85, 0x00, 0x81, 0x43, 0x00, 0x04, 0xFF}));
 }
 
 void voiceChunk() {
