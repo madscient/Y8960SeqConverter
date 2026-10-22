@@ -9,3 +9,4 @@
 # people using the release: the source archives GitHub makes leave them out.
 doc/plan.md export-ignore
 doc/musica-driver.md export-ignore
+doc/mgsdrv-study.md export-ignore
